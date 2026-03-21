@@ -2,8 +2,13 @@
 
 GPU inference service: SGLang in Docker serving one model at a time via Ollama-compatible and OpenAI-compatible APIs.
 
+## Platform
+
+Linux only. SGLang's Docker runtime requires the NVIDIA Container Toolkit, which is Linux-only.
+
 ## Prerequisites
 
+- Linux host
 - NVIDIA GPU with drivers installed (`nvidia-smi` must work)
 - [Docker](https://docs.docker.com/engine/install/)
 - [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
@@ -28,6 +33,8 @@ Two JSON files and one selector drive all runtime configuration:
 - **`models.json`** — model definitions and shared settings (port, log level, timeouts)
 - **`hardware.json`** — hardware profiles with GPU settings and per-model tuning
 - **`.active`** — current model + hardware selection, written by `make use`
+
+> **Important:** The included `models.json` and `hardware.json` are tuned for an RTX Pro 6000. If you clone this repo, you should create your own hardware profile in `hardware.json` matching your GPU and adjust `models.json` for the models you want to serve. In particular, `mem_fraction_static`, `context_length`, and `tp`/`ep` values depend entirely on your GPU's VRAM and count.
 
 See [docs/configuration.md](docs/configuration.md) for details on adding models and hardware profiles.
 
