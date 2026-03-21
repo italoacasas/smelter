@@ -1,0 +1,7 @@
+.env
+.active
+*.log
+*.pid
+models/
+__pycache__/
+*.pyc

@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "WebFetch(domain:docs.sglang.io)",
+      "Bash(nvidia-smi)",
+      "Bash(docker --version)",
+      "Bash(docker compose:*)",
+      "Bash(ip addr:*)",
+      "Bash(ufw status:*)",
+      "Bash(iptables -L INPUT -n)",
+      "WebFetch(domain:docs.sglang.ai)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:hub.docker.com)",
+      "Bash(nvidia-smi:*)",
+      "Bash(docker images:*)",
+      "Bash(docker info:*)",
+      "Bash(dpkg -l)",
+      "Bash(rpm -qa)",
+      "Bash(nvidia-container-cli info:*)",
+      "Bash(docker run:*)",
+      "Bash(tailscale status:*)"
+    ]
+  }
+}

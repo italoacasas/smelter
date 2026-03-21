@@ -1,0 +1,50 @@
+services:
+  sglang:
+    image: lmsysorg/sglang:v0.5.9-cu130-runtime
+    container_name: smelter
+    volumes:
+      - ./models:/root/.cache/huggingface
+      - ./sglang-moe-configs:/sglang-moe-configs:ro
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      - HF_TOKEN=${HF_TOKEN:-}
+      - SGLANG_MOE_CONFIG_DIR=/sglang-moe-configs
+      - TORCH_ALLOW_TF32_CUBLAS_OVERRIDE=1
+      - CUDA_MODULE_LOADING=LAZY
+      - CUDA_DEVICE_MAX_CONNECTIONS=1
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >
+        python3 -m sglang.launch_server
+        --model-path ${MODEL_ID}
+        --host 0.0.0.0
+        --port ${PORT}
+        --mem-fraction-static ${MEM_FRACTION_STATIC}
+        --context-length ${CONTEXT_LENGTH}
+        --tp ${TP}
+        --ep ${EP}
+        --trust-remote-code
+        --attention-backend ${ATTENTION_BACKEND}
+        --chunked-prefill-size ${CHUNKED_PREFILL_SIZE}
+        --num-continuous-decode-steps ${NUM_CONTINUOUS_DECODE_STEPS}
+        --log-level ${LOG_LEVEL}
+        ${EXTRA_LAUNCH_ARGS}
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    ipc: host
+    shm_size: "${SHM_SIZE}"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:${PORT}/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 300s
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: ${GPU_COUNT}
+              capabilities: [gpu]
