@@ -36,9 +36,9 @@
         "extra_args": ["--kv-cache-dtype", "fp8_e4m3"]
       },
       "qwen3-coder-next": {
-        "mem_fraction_static": 0.88,
-        "context_length": 131072,
-        "extra_args": ["--kv-cache-dtype", "fp8_e4m3"]
+        "mem_fraction_static": 0.80,
+        "context_length": 65536,
+        "extra_args": []
       }
     }
   },

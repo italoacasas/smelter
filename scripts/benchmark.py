@@ -31,17 +31,20 @@ def load_config(project_dir: Path) -> dict[str, str]:
         raise SystemExit("Error: no active config. Run: make use MODEL=<name> HARDWARE=<name>")
 
     lines = active_file.read_text(encoding="utf-8").strip().splitlines()
-    active = lines[0]
+    active_model = lines[0]
+    active_hardware = lines[1] if len(lines) > 1 else "unknown"
     models = json.loads(models_path.read_text(encoding="utf-8"))
 
-    if active not in models:
-        raise SystemExit(f"Error: unknown model '{active}' in .active")
+    if active_model not in models:
+        raise SystemExit(f"Error: unknown model '{active_model}' in .active")
 
-    cfg = models[active]
+    cfg = models[active_model]
     shared = models.get("_shared", {})
 
     return {
         "MODEL_ID": cfg["model_id"],
+        "MODEL_NAME": active_model,
+        "HARDWARE": active_hardware,
         "PORT": str(shared.get("port", 11435)),
     }
 
@@ -52,6 +55,44 @@ def get_sglang_image(compose_path: Path) -> str:
         if stripped.startswith("image:"):
             return stripped.split(":", 1)[1].strip()
     raise SystemExit("Error: could not find image in docker-compose.yml.")
+
+
+def update_latest_snapshot(
+    project_dir: Path,
+    result_path: Path,
+    model_name: str,
+    hardware: str,
+    label: str,
+    timestamp: str,
+) -> None:
+    """Update benchmarks/latest.json with a summary of the most recent run."""
+    snapshot_path = project_dir / "benchmarks" / "latest.json"
+
+    if snapshot_path.exists():
+        snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    else:
+        snapshot = {}
+
+    raw = json.loads(result_path.read_text(encoding="utf-8").strip())
+
+    key = f"{model_name}/{hardware}"
+    snapshot[key] = {
+        "model_id": raw.get("server_info", {}).get("model_path", ""),
+        "timestamp": timestamp,
+        "label": label,
+        "result_file": str(result_path.relative_to(project_dir)),
+        "completed": raw.get("completed"),
+        "output_tok_per_s": round(raw.get("output_throughput", 0), 2),
+        "mean_ttft_ms": round(raw.get("mean_ttft_ms", 0), 2),
+        "mean_tpot_ms": round(raw.get("mean_tpot_ms", 0), 2),
+        "mean_e2e_latency_ms": round(raw.get("mean_e2e_latency_ms", 0), 2),
+        "p99_itl_ms": round(raw.get("p99_itl_ms", 0), 2),
+    }
+
+    snapshot_path.write_text(
+        json.dumps(snapshot, indent=2) + "\n", encoding="utf-8"
+    )
+    print(f"Snapshot: {snapshot_path.relative_to(project_dir)} [{key}]")
 
 
 def slugify(value: str) -> str:
@@ -111,6 +152,11 @@ def main(argv: list[str]) -> int:
             dst.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
             print()
             print(f"Saved: {dst.relative_to(project_dir)}")
+            update_latest_snapshot(
+                project_dir, dst,
+                config["MODEL_NAME"], config["HARDWARE"],
+                label, timestamp,
+            )
 
     return result.returncode
 

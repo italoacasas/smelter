@@ -1,0 +1,26 @@
+{
+  "nemotron-cascade-2/rtx-pro-6000": {
+    "model_id": "nvidia/Nemotron-Cascade-2-30B-A3B",
+    "timestamp": "20260321T165301Z",
+    "label": "gpu-clocks-locked",
+    "result_file": "benchmarks/results/20260321T165301Z-gpu-clocks-locked.jsonl",
+    "completed": 100,
+    "output_tok_per_s": 155.03,
+    "mean_ttft_ms": 93.51,
+    "mean_tpot_ms": 6.29,
+    "mean_e2e_latency_ms": 3382.49,
+    "p99_itl_ms": 6.51
+  },
+  "qwen3-coder-next/rtx-pro-6000": {
+    "model_id": "Qwen/Qwen3-Coder-Next-FP8",
+    "timestamp": "20260321T192844Z",
+    "label": "--cold-start",
+    "result_file": "benchmarks/results/20260321T192844Z-cold-start.jsonl",
+    "completed": 100,
+    "output_tok_per_s": 124.05,
+    "mean_ttft_ms": 53.59,
+    "mean_tpot_ms": 7.96,
+    "mean_e2e_latency_ms": 4227.25,
+    "p99_itl_ms": 8.25
+  }
+}

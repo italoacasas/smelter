@@ -28,7 +28,13 @@
   "qwen3-coder-next": {
     "model_id": "Qwen/Qwen3-Coder-Next-FP8",
     "extra_args": [
-      "--tool-call-parser", "qwen3_coder"
+      "--tool-call-parser", "qwen3_coder",
+      "--attention-backend", "triton",
+      "--fp8-gemm-backend", "cutlass",
+      "--speculative-algorithm", "NEXTN",
+      "--speculative-num-steps", "3",
+      "--speculative-eagle-topk", "1",
+      "--speculative-num-draft-tokens", "4"
     ]
   }
 }
