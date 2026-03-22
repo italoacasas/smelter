@@ -13,14 +13,14 @@
   },
   "qwen3-coder-next/rtx-pro-6000": {
     "model_id": "Qwen/Qwen3-Coder-Next-FP8",
-    "timestamp": "20260321T192844Z",
-    "label": "--cold-start",
-    "result_file": "benchmarks/results/20260321T192844Z-cold-start.jsonl",
+    "timestamp": "20260321T202014Z",
+    "label": "bf16-kv-cutlass-triton-moe",
+    "result_file": "benchmarks/results/20260321T202014Z-bf16-kv-cutlass-triton-moe.jsonl",
     "completed": 100,
-    "output_tok_per_s": 124.05,
-    "mean_ttft_ms": 53.59,
+    "output_tok_per_s": 122.38,
+    "mean_ttft_ms": 109.27,
     "mean_tpot_ms": 7.96,
-    "mean_e2e_latency_ms": 4227.25,
-    "p99_itl_ms": 8.25
+    "mean_e2e_latency_ms": 4284.78,
+    "p99_itl_ms": 8.26
   }
 }

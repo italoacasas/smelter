@@ -15,7 +15,6 @@ services:
       - CUDA_DEVICE_MAX_CONNECTIONS=1
       - SGLANG_DISABLE_DEEP_GEMM=1
       - SGLANG_SET_CPU_AFFINITY=1
-      - SGLANG_ENABLE_SPEC_V2=True
     entrypoint: ["/bin/sh", "-c"]
     command:
       - >

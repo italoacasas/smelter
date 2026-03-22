@@ -31,10 +31,7 @@
       "--tool-call-parser", "qwen3_coder",
       "--attention-backend", "triton",
       "--fp8-gemm-backend", "cutlass",
-      "--speculative-algorithm", "NEXTN",
-      "--speculative-num-steps", "3",
-      "--speculative-eagle-topk", "1",
-      "--speculative-num-draft-tokens", "4"
+      "--moe-runner-backend", "triton"
     ]
   }
 }
