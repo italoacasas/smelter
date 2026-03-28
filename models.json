@@ -33,5 +33,12 @@
       "--fp8-gemm-backend", "cutlass",
       "--moe-runner-backend", "triton"
     ]
+  },
+  "nemotron-3-super": {
+    "model_id": "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8",
+    "extra_args": [
+      "--tool-call-parser", "qwen3_coder",
+      "--reasoning-parser", "nano_v3"
+    ]
   }
 }

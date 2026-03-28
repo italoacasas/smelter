@@ -42,6 +42,54 @@
       }
     }
   },
+  "rtx-pro-6000-x2": {
+    "description": "2x NVIDIA RTX Pro 6000 Blackwell",
+    "gpu_info": {
+      "name": "NVIDIA RTX Pro 6000 Blackwell Workstation Edition",
+      "count": 2,
+      "vram_gb": 192,
+      "vram_type": "GDDR7",
+      "bandwidth_tbs": 3.6,
+      "bus_width_bit": 512,
+      "tdp_w": 600,
+      "arch": "Blackwell",
+      "note": "2x 96GB dedicated GDDR7 VRAM, 1.8 TB/s bandwidth each, PCIe, 4nm"
+    },
+    "shm_size": "64g",
+    "tp": 2,
+    "ep": 2,
+    "gpu_count": 2,
+    "attention_backend": "flashinfer",
+    "chunked_prefill_size": 32768,
+    "num_continuous_decode_steps": 8,
+    "models": {
+      "nemotron-3-super": {
+        "mem_fraction_static": 0.85,
+        "context_length": 131072,
+        "extra_args": ["--kv-cache-dtype", "fp8_e4m3", "--mamba-ssm-dtype", "bfloat16"]
+      },
+      "nemotron-cascade-2": {
+        "mem_fraction_static": 0.90,
+        "context_length": 262144,
+        "extra_args": ["--kv-cache-dtype", "fp8_e4m3"]
+      },
+      "qwen3.5-35b": {
+        "mem_fraction_static": 0.88,
+        "context_length": 262144,
+        "extra_args": ["--kv-cache-dtype", "fp8_e4m3"]
+      },
+      "qwen3.5-27b": {
+        "mem_fraction_static": 0.90,
+        "context_length": 262144,
+        "extra_args": ["--kv-cache-dtype", "fp8_e4m3"]
+      },
+      "qwen3-coder-next": {
+        "mem_fraction_static": 0.88,
+        "context_length": 262144,
+        "extra_args": []
+      }
+    }
+  },
   "dgx-spark": {
     "description": "NVIDIA DGX Spark (GB10 Grace Blackwell)",
     "gpu_info": {
