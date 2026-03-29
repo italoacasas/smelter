@@ -18,8 +18,9 @@ make logs                 # Tail container logs
 make chat                 # Interactive chat session
 make download             # Pre-download model weights
 make pull                 # Pull latest Docker image
-make benchmark            # Fixed benchmark (100 prompts, 1024 in/out, concurrency 1)
+make benchmark            # Fixed benchmark (20 prompts, 1024 in/out, concurrency 1)
 make benchmark LABEL=after-fp8-kv  # Same benchmark with a descriptive label
+BENCH_NUM_PROMPTS=50 make benchmark  # Override prompt count via env var
 make refresh-moe-configs  # Refresh MoE kernel configs with before/after benchmarks
 ```
 
@@ -51,7 +52,7 @@ Two JSON files, one selector:
 
 ## Benchmarking
 
-`scripts/benchmark.py` runs a fixed benchmark (100 random prompts, 1024 input/output tokens, concurrency 1) for consistent before/after comparison. Results go to `benchmarks/results/`.
+`scripts/benchmark.py` runs a fixed benchmark (20 random prompts, 1024 input/output tokens, concurrency 1) for consistent before/after comparison. Results go to `benchmarks/results/`. Tunable via env vars: `BENCH_NUM_PROMPTS`, `BENCH_INPUT_LEN`, `BENCH_OUTPUT_LEN`, `BENCH_CONCURRENCY`.
 
 `scripts/gpu-tuning-matrix.py` sweeps `MEM_FRACTION_STATIC` and `CONTEXT_LENGTH` combinations.
 

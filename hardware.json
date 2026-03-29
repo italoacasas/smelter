@@ -64,7 +64,7 @@
     "num_continuous_decode_steps": 8,
     "models": {
       "nemotron-3-super": {
-        "mem_fraction_static": 0.85,
+        "mem_fraction_static": 0.88,
         "context_length": 131072,
         "extra_args": ["--kv-cache-dtype", "fp8_e4m3", "--mamba-ssm-dtype", "bfloat16"]
       },

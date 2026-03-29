@@ -22,5 +22,17 @@
     "mean_tpot_ms": 7.96,
     "mean_e2e_latency_ms": 4284.78,
     "p99_itl_ms": 8.26
+  },
+  "nemotron-3-super/rtx-pro-6000-x2": {
+    "model_id": "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8",
+    "timestamp": "20260328T222528Z",
+    "label": "baseline-20p",
+    "result_file": "benchmarks/results/20260328T222528Z-baseline-20p.jsonl",
+    "completed": 20,
+    "output_tok_per_s": 77.4,
+    "mean_ttft_ms": 163.31,
+    "mean_tpot_ms": 12.66,
+    "mean_e2e_latency_ms": 7543.31,
+    "p99_itl_ms": 13.19
   }
 }

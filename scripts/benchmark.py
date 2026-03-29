@@ -8,6 +8,7 @@ Docker container, and saves timestamped JSONL results to benchmarks/results/.
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import sys
@@ -15,10 +16,10 @@ import tempfile
 import time
 from pathlib import Path
 
-NUM_PROMPTS = 100
-RANDOM_INPUT_LEN = 1024
-RANDOM_OUTPUT_LEN = 1024
-MAX_CONCURRENCY = 1
+NUM_PROMPTS = int(os.environ.get("BENCH_NUM_PROMPTS", 20))
+RANDOM_INPUT_LEN = int(os.environ.get("BENCH_INPUT_LEN", 1024))
+RANDOM_OUTPUT_LEN = int(os.environ.get("BENCH_OUTPUT_LEN", 1024))
+MAX_CONCURRENCY = int(os.environ.get("BENCH_CONCURRENCY", 1))
 
 
 def load_config(project_dir: Path) -> dict[str, str]:
