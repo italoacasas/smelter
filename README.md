@@ -1,10 +1,10 @@
 # Smelter
 
-GPU inference service: SGLang in Docker serving one model at a time via Ollama-compatible and OpenAI-compatible APIs.
+GPU inference service for a fixed Linux host, built around SGLang and Docker. Smelter now runs one active workload at a time, where a workload can contain one or more model instances on different ports and GPUs.
 
 ## Platform
 
-Linux only. SGLang's Docker runtime requires the NVIDIA Container Toolkit, which is Linux-only.
+Linux only. SGLang's Docker runtime requires the NVIDIA Container Toolkit.
 
 ## Prerequisites
 
@@ -15,53 +15,87 @@ Linux only. SGLang's Docker runtime requires the NVIDIA Container Toolkit, which
 
 ## Quick Start
 
-> **Note:** The first run downloads model weights into `models/`. Ensure you have enough disk space.
-
 ```bash
-make pull                                                  # Pull the Docker image
-make use MODEL=nemotron-cascade-2 HARDWARE=rtx-pro-6000   # Select model + hardware
-make start                                                 # Start (waits for readiness)
-make health                                                # Verify API endpoints
+make pull
+make use WORKLOAD=qwen36
+make download
+make start
+make health
 ```
 
-The service is available at `http://<server-ip>:11435` by default.
+Target a specific instance when chatting or benchmarking:
+
+```bash
+INSTANCE=qwen36 make chat
+INSTANCE=qwen36 make bench
+```
+
+## Current Runtime Model
+
+Smelter assumes one fixed server:
+
+- 2x NVIDIA RTX Pro 6000
+- one active workload selected in `.active`
+- one or more instances inside that workload
+- one generated Compose file at `.smelter/compose.generated.yml`
+
+The checked-in rollout:
+
+- `qwen36`
+  - `qwen36` (`Qwen/Qwen3.6-35B-A3B-FP8`) on port `11435`, GPU `0`
 
 ## Configuration
 
-Two JSON files and one selector drive all runtime configuration:
+Runtime config is split across four JSON files and one selector:
 
-- **`models.json`** — model definitions and shared settings (port, log level, timeouts)
-- **`hardware.json`** — hardware profiles with GPU settings and per-model tuning
-- **`.active`** — current model + hardware selection, written by `make use`
+- `models.json` — model definitions and shared defaults
+- `hardware.json` — fixed host facts and shared container settings
+- `instances.json` — runnable server instances
+- `workloads.json` — named sets of instances
+- `.active` — active workload name
 
-> **Important:** The included `models.json` and `hardware.json` are tuned for an RTX Pro 6000. If you clone this repo, you should create your own hardware profile in `hardware.json` matching your GPU and adjust `models.json` for the models you want to serve. In particular, `mem_fraction_static`, `context_length`, and `tp`/`ep` values depend entirely on your GPU's VRAM and count.
+See [docs/configuration.md](docs/configuration.md) for the full contract.
 
-See [docs/configuration.md](docs/configuration.md) for details on adding models and hardware profiles.
+## Runtime Image
 
-## API
+The repo uses the stable generic SGLang runtime image:
 
-The service exposes Ollama-compatible and OpenAI-compatible (`/v1/*`) endpoints. Any client that speaks either protocol works out of the box.
+- `lmsysorg/sglang:v0.5.10.post1-cu130-runtime`
+
+That image is used for the whole rollout.
+
+## APIs
+
+Each running instance exposes:
+
+- `/health`
+- `/v1/*` OpenAI-compatible APIs
+- `/api/*` Ollama-compatible APIs
 
 ## Make Targets
 
-| Target                 | Description                                                     |
-| ---------------------- | --------------------------------------------------------------- |
-| `make use`             | Select active model + hardware profile (writes `.active`)       |
-| `make start`           | Start the service (detached, waits for readiness)               |
-| `make stop`            | Stop the service                                                |
-| `make dev`             | Start in foreground with verbose logging                        |
-| `make health`          | Test all API endpoints                                          |
-| `make logs`            | Tail service logs                                               |
-| `make chat`            | Interactive chat session                                        |
-| `make download`        | Pre-download model weights                                      |
-| `make pull`            | Pull/update the Docker image                                    |
-| `make benchmark`       | Run the benchmark harness                                       |
-| `make refresh-moe-configs` | Refresh MoE kernel configs with before/after benchmarks    |
+Run `make help` for the full list. Common targets:
+
+| Target | Description |
+| --- | --- |
+| `make use WORKLOAD=<name>` | Select the active workload |
+| `make start` | Start the active workload and wait for readiness |
+| `make stop` | Stop the active workload |
+| `make restart` | Stop then start the active workload |
+| `make dev` | Start the active workload in the foreground |
+| `make logs` | Tail logs for the active workload, or one `INSTANCE` |
+| `make health` | Verify endpoints for the active workload, or one `INSTANCE` |
+| `make download` | Download all unique models in the active workload, or one `INSTANCE` |
+| `make chat` | Interactive chat for one `INSTANCE` |
+| `make bench` | Run the quick benchmark for one `INSTANCE` |
+| `make refresh-moe-configs` | Refresh MoE configs for one target instance |
+| `make pull` | Pull the configured runtime image |
 
 ## Troubleshooting
 
-- **Service won't start**: Check logs with `make logs`. Ensure `nvidia-smi` works and that the model becomes ready before `STARTUP_TIMEOUT`.
-- **OOM errors**: Reduce `context_length` or `mem_fraction_static` in the hardware profile's model entry.
-- **Port conflict**: Change `port` in `models.json` `_shared` if 11435 is already in use.
-- **Startup looks healthy but requests fail**: Run `make health` to distinguish container health from model readiness.
-- **MoE config changes disappeared after a restart**: Save them under `sglang-moe-configs/`; edits inside the container are not persisted.
+- Service will not start: run `make logs`; render the compose file with `scripts/render-compose.py` if you need to inspect it.
+- A workload is invalid: run `make use WORKLOAD=<name>` again and fix the referenced config.
+- OOM errors: reduce `mem_fraction_static` or `context_length` in `instances.json`.
+- Port conflicts: change the instance `port` in `instances.json`.
+- Chat or benchmark errors: pass `INSTANCE=<name>` from the active workload.
+- MoE config edits disappear: persist them under `sglang-moe-configs/`, not inside a container.

@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
-"""Run a fixed sglang.bench_serving benchmark for comparing config changes.
-
-Reads config from models.json + .active, runs the benchmark in an ephemeral
-Docker container, and saves timestamped JSONL results to benchmarks/results/.
-"""
+"""Run sglang.bench_serving against one active workload instance."""
 
 from __future__ import annotations
 
@@ -16,53 +12,17 @@ import tempfile
 import time
 from pathlib import Path
 
-NUM_PROMPTS = int(os.environ.get("BENCH_NUM_PROMPTS", 20))
+from smelter_config import ConfigError, load_state, resolve_instance_runtime
+
+NUM_PROMPTS = int(os.environ.get("BENCH_NUM_PROMPTS", 8))
 RANDOM_INPUT_LEN = int(os.environ.get("BENCH_INPUT_LEN", 1024))
 RANDOM_OUTPUT_LEN = int(os.environ.get("BENCH_OUTPUT_LEN", 1024))
 MAX_CONCURRENCY = int(os.environ.get("BENCH_CONCURRENCY", 1))
 
-
-def load_config(project_dir: Path) -> dict[str, str]:
-    models_path = project_dir / "models.json"
-    active_file = project_dir / ".active"
-
-    if not models_path.exists():
-        raise SystemExit("Error: models.json not found.")
-    if not active_file.exists():
-        raise SystemExit("Error: no active config. Run: make use MODEL=<name> HARDWARE=<name>")
-
-    lines = active_file.read_text(encoding="utf-8").strip().splitlines()
-    active_model = lines[0]
-    active_hardware = lines[1] if len(lines) > 1 else "unknown"
-    models = json.loads(models_path.read_text(encoding="utf-8"))
-
-    if active_model not in models:
-        raise SystemExit(f"Error: unknown model '{active_model}' in .active")
-
-    cfg = models[active_model]
-    shared = models.get("_shared", {})
-
-    return {
-        "MODEL_ID": cfg["model_id"],
-        "MODEL_NAME": active_model,
-        "HARDWARE": active_hardware,
-        "PORT": str(shared.get("port", 11435)),
-    }
-
-
-def get_sglang_image(compose_path: Path) -> str:
-    for line in compose_path.read_text(encoding="utf-8").splitlines():
-        stripped = line.strip()
-        if stripped.startswith("image:"):
-            return stripped.split(":", 1)[1].strip()
-    raise SystemExit("Error: could not find image in docker-compose.yml.")
-
-
 def update_latest_snapshot(
     project_dir: Path,
     result_path: Path,
-    model_name: str,
-    hardware: str,
+    instance_name: str,
     label: str,
     timestamp: str,
 ) -> None:
@@ -76,7 +36,7 @@ def update_latest_snapshot(
 
     raw = json.loads(result_path.read_text(encoding="utf-8").strip())
 
-    key = f"{model_name}/{hardware}"
+    key = instance_name
     snapshot[key] = {
         "model_id": raw.get("server_info", {}).get("model_path", ""),
         "timestamp": timestamp,
@@ -102,12 +62,29 @@ def slugify(value: str) -> str:
 
 def main(argv: list[str]) -> int:
     project_dir = Path(__file__).resolve().parent.parent
-    compose_path = project_dir / "docker-compose.yml"
-    config = load_config(project_dir)
+    try:
+        state = load_state(require_active=True)
+    except ConfigError as exc:
+        raise SystemExit(f"Error: {exc}") from exc
 
-    port = config["PORT"]
-    model = config["MODEL_ID"]
-    image = get_sglang_image(compose_path)
+    instance_name = os.environ.get("INSTANCE")
+    if not instance_name:
+        active = state["active_instances"]
+        if len(active) == 1:
+            instance_name = active[0]
+        else:
+            raise SystemExit(
+                f"Error: active workload has {len(active)} instances ({', '.join(active)}). Pass INSTANCE=<name>."
+            )
+
+    try:
+        config = resolve_instance_runtime(state, instance_name)
+    except ConfigError as exc:
+        raise SystemExit(f"Error: {exc}") from exc
+
+    port = str(config["port"])
+    model = config["model_id"]
+    image = config["docker_image"]
 
     output_dir = project_dir / "benchmarks" / "results"
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -137,6 +114,7 @@ def main(argv: list[str]) -> int:
         ]
 
         print(f"Image:       {image}")
+        print(f"Instance:    {instance_name}")
         print(f"Model:       {model}")
         print(f"Port:        {port}")
         print(f"Label:       {label}")
@@ -155,7 +133,7 @@ def main(argv: list[str]) -> int:
             print(f"Saved: {dst.relative_to(project_dir)}")
             update_latest_snapshot(
                 project_dir, dst,
-                config["MODEL_NAME"], config["HARDWARE"],
+                instance_name,
                 label, timestamp,
             )
 

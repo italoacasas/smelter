@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import csv
 import json
 import os
 import shutil
@@ -16,6 +15,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from smelter_config import ConfigError, load_state, resolve_instance_runtime
+
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 BENCHMARK_SCRIPT = PROJECT_DIR / "scripts" / "benchmark.py"
@@ -25,8 +26,6 @@ UPSTREAM_TUNING_URL = (
     "https://github.com/sgl-project/sglang/tree/main/benchmark/kernels/fused_moe_triton"
 )
 DEFAULT_LABEL = "moe-config-refresh"
-DEFAULT_WARM_RUNS = 3
-DEFAULT_COLD_CASE = "short"
 FALLBACK_SOURCE_DEVICES = (
     "NVIDIA_L40S",
     "NVIDIA_H100_80GB_HBM3",
@@ -35,7 +34,9 @@ FALLBACK_SOURCE_DEVICES = (
 
 
 @dataclass(frozen=True)
-class ComposeMeta:
+class RuntimeMeta:
+    active_workload: str
+    instance_name: str
     image: str
     model_id: str
     tp_size: int
@@ -48,21 +49,18 @@ class ComposeMeta:
 @dataclass(frozen=True)
 class BenchmarkArtifact:
     label: str
-    csv_path: Path
-    md_path: Path
+    result_path: Path
+    metrics: dict[str, Any]
 
 
 def slugify(value: str) -> str:
-    return "".join(
-        character if character.isalnum() else "-"
-        for character in value.lower()
-    ).strip("-") or "benchmark"
+    return "".join(character if character.isalnum() else "-" for character in value.lower()).strip("-") or "benchmark"
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Refresh repo-backed MoE Triton config files for the configured model "
+            "Refresh repo-backed MoE Triton config files for one target instance "
             "and benchmark before/after performance."
         )
     )
@@ -79,21 +77,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
-        "--warm-runs",
-        type=int,
-        default=DEFAULT_WARM_RUNS,
-        help="Warm benchmark runs per prompt case for both before and after measurements.",
-    )
-    parser.add_argument(
-        "--cold-case",
-        choices=["short", "medium", "long"],
-        default=DEFAULT_COLD_CASE,
-        help="Prompt case used for the cold-start request in both benchmark passes.",
-    )
-    parser.add_argument(
         "--list",
         action="store_true",
-        help="List available upstream source profiles for the configured model and exit.",
+        help="List available upstream source profiles for the configured instance and exit.",
     )
     return parser.parse_args(argv)
 
@@ -115,46 +101,36 @@ def run_command(
     )
 
 
-def command_flag_value(command_items: list[str], flag: str, default: str) -> str:
+def resolve_runtime_meta() -> RuntimeMeta:
     try:
-        index = command_items.index(flag)
-    except ValueError:
-        return default
+        state = load_state(require_active=True)
+    except ConfigError as exc:
+        raise SystemExit(f"Error: {exc}") from exc
 
-    if index + 1 >= len(command_items):
-        return default
-    return str(command_items[index + 1])
+    instance_name = os.environ.get("INSTANCE")
+    if not instance_name:
+        if len(state["active_instances"]) == 1:
+            instance_name = state["active_instances"][0]
+        else:
+            raise SystemExit(
+                "Error: refresh-moe-configs requires INSTANCE=<name> when the active workload has multiple instances."
+            )
 
+    try:
+        runtime = resolve_instance_runtime(state, instance_name)
+    except ConfigError as exc:
+        raise SystemExit(f"Error: {exc}") from exc
 
-def resolve_compose_meta() -> ComposeMeta:
-    compose_output = run_command(["docker", "compose", "config", "--format", "json"])
-    config = json.loads(compose_output.stdout)
-    service = config["services"]["sglang"]
-    command = [str(item) for item in service.get("command", [])]
-    environment = service.get("environment", {})
-
-    hf_cache_source: Path | None = None
-    moe_config_source: Path | None = None
-    for volume in service.get("volumes", []):
-        target = volume.get("target")
-        source = volume.get("source")
-        if not source:
-            continue
-        if target == "/root/.cache/huggingface":
-            hf_cache_source = Path(source)
-        elif target == "/sglang-moe-configs":
-            moe_config_source = Path(source)
-
-    return ComposeMeta(
-        image=str(service["image"]),
-        model_id=command_flag_value(
-            command, "--model-path", "nvidia/Nemotron-Cascade-2-30B-A3B"
-        ),
-        tp_size=int(command_flag_value(command, "--tp", "1")),
-        ep_size=int(command_flag_value(command, "--ep", "1")),
-        hf_cache_source=hf_cache_source or (PROJECT_DIR / "models"),
-        moe_config_source=moe_config_source or (PROJECT_DIR / "sglang-moe-configs"),
-        hf_token=str(environment.get("HF_TOKEN", os.environ.get("HF_TOKEN", ""))),
+    return RuntimeMeta(
+        active_workload=state["active_workload"],
+        instance_name=runtime["instance_name"],
+        image=runtime["docker_image"],
+        model_id=runtime["model_id"],
+        tp_size=runtime["tp"],
+        ep_size=runtime["ep"],
+        hf_cache_source=PROJECT_DIR / "models",
+        moe_config_source=PROJECT_DIR / "sglang-moe-configs",
+        hf_token=os.environ.get("HF_TOKEN", ""),
     )
 
 
@@ -164,7 +140,8 @@ def sanitize_device_name(value: str) -> str:
 
 def get_host_device_name() -> str:
     result = run_command(
-        ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"], cwd=None
+        ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
+        cwd=None,
     )
     names = [line.strip() for line in result.stdout.splitlines() if line.strip()]
     if not names:
@@ -172,28 +149,8 @@ def get_host_device_name() -> str:
     return sanitize_device_name(names[0])
 
 
-def split_filename_around_device(filename: str) -> tuple[str, str, str]:
-    marker = ",device_name="
-    if marker not in filename:
-        raise ValueError(f"Could not parse device name from filename: {filename}")
-
-    prefix, remainder = filename.split(marker, 1)
-    prefix = f"{prefix}{marker}"
-    suffix_markers = [",dtype=", ",block_shape=", ",per_channel_quant=True", ".json"]
-    suffix_positions = [
-        remainder.find(candidate)
-        for candidate in suffix_markers
-        if remainder.find(candidate) != -1
-    ]
-    if not suffix_positions:
-        raise ValueError(f"Could not determine suffix for filename: {filename}")
-
-    suffix_start = min(suffix_positions)
-    return prefix, remainder[:suffix_start], remainder[suffix_start:]
-
-
 def fetch_moe_metadata(
-    compose_meta: ComposeMeta,
+    runtime_meta: RuntimeMeta,
     *,
     host_device_name: str,
     requested_source_device: str | None,
@@ -351,26 +308,26 @@ print(
         "--gpus",
         "all",
         "-v",
-        f"{compose_meta.hf_cache_source}:/root/.cache/huggingface",
+        f"{runtime_meta.hf_cache_source}:/root/.cache/huggingface",
         "-e",
-        f"MODEL_ID={compose_meta.model_id}",
+        f"MODEL_ID={runtime_meta.model_id}",
         "-e",
-        f"TP_SIZE={compose_meta.tp_size}",
+        f"TP_SIZE={runtime_meta.tp_size}",
         "-e",
-        f"EP_SIZE={compose_meta.ep_size}",
+        f"EP_SIZE={runtime_meta.ep_size}",
         "-e",
         f"HOST_DEVICE={host_device_name}",
         "-e",
         f"SOURCE_DEVICE={requested_source_device}",
         "-e",
-        f"HF_TOKEN={compose_meta.hf_token}",
+        f"HF_TOKEN={runtime_meta.hf_token}",
         "-e",
         "HF_HUB_DISABLE_TELEMETRY=1",
         "-e",
         "TRANSFORMERS_VERBOSITY=error",
         "--entrypoint",
         "python3",
-        compose_meta.image,
+        runtime_meta.image,
         "-W",
         "ignore",
         "-c",
@@ -416,159 +373,99 @@ def print_profile_listing(metadata: dict[str, Any], *, target_primary: Path, tar
         )
 
 
-def run_benchmark(*, label: str, warm_runs: int, cold_case: str) -> BenchmarkArtifact:
-    command = [
-        sys.executable,
-        str(BENCHMARK_SCRIPT),
-        "--cold-start",
-        "--warm-runs",
-        str(warm_runs),
-        "--cold-case",
-        cold_case,
-        "--label",
-        label,
-    ]
+def load_benchmark_metrics(path: Path) -> dict[str, Any]:
+    lines = [line.strip() for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    if not lines:
+        raise SystemExit(f"Error: benchmark result file is empty: {path}")
+    return json.loads(lines[-1])
+
+
+def parse_saved_path(stdout: str) -> Path:
+    for line in stdout.splitlines():
+        if line.startswith("Saved: "):
+            return PROJECT_DIR / line.removeprefix("Saved: ").strip()
+    raise SystemExit("Error: could not determine benchmark artifact path from benchmark.py output.")
+
+
+def run_benchmark(*, instance_name: str, label: str) -> BenchmarkArtifact:
+    env = os.environ.copy()
+    env["INSTANCE"] = instance_name
+    command = [sys.executable, str(BENCHMARK_SCRIPT), label]
+
     try:
-        result = run_command(command)
+        result = run_command(command, env=env)
     except subprocess.CalledProcessError as error:
         if error.stdout:
             print(error.stdout, end="")
         if error.stderr:
             print(error.stderr, end="", file=sys.stderr)
         raise
+
     if result.stdout:
         print(result.stdout, end="")
     if result.stderr:
         print(result.stderr, end="", file=sys.stderr)
 
-    csv_path: Path | None = None
-    md_path: Path | None = None
-    for line in result.stdout.splitlines():
-        if line.startswith("Wrote CSV report: "):
-            csv_path = PROJECT_DIR / line.removeprefix("Wrote CSV report: ").strip()
-        elif line.startswith("Wrote Markdown report: "):
-            md_path = PROJECT_DIR / line.removeprefix("Wrote Markdown report: ").strip()
-
-    if csv_path is None or md_path is None:
-        raise SystemExit("Error: could not determine benchmark artifact paths from benchmark.py output.")
-
-    return BenchmarkArtifact(label=label, csv_path=csv_path, md_path=md_path)
-
-
-def load_csv_rows(path: Path) -> list[dict[str, str]]:
-    with path.open(encoding="utf-8", newline="") as handle:
-        reader = csv.DictReader(handle)
-        return list(reader)
-
-
-def summarize_cold(rows: list[dict[str, str]]) -> dict[str, float] | None:
-    cold_rows = [row for row in rows if row["scenario"] == "cold_start"]
-    if not cold_rows:
-        return None
-    row = cold_rows[0]
-    return {
-        "container_health_ready_s": float(row["container_health_ready_s"]),
-        "model_ready_s": float(row["model_ready_s"]),
-        "first_successful_request_s": float(row["first_successful_request_s"]),
-        "first_token_latency_s": float(row["first_token_latency_s"]),
-        "total_response_time_s": float(row["total_response_time_s"]),
-        "throughput_tokens_per_second": float(row["throughput_tokens_per_second"] or 0.0),
-    }
-
-
-def summarize_warm(
-    rows: list[dict[str, str]],
-    *,
-    skip_first_iteration: bool,
-) -> dict[str, dict[str, float]]:
-    grouped: dict[str, list[dict[str, str]]] = {}
-    for row in rows:
-        if row["scenario"] != "warm":
-            continue
-        iteration = int(row["iteration"])
-        if skip_first_iteration and iteration < 2:
-            continue
-        grouped.setdefault(row["case"], []).append(row)
-
-    summary: dict[str, dict[str, float]] = {}
-    for case_name in ["short", "medium", "long"]:
-        case_rows = grouped.get(case_name, [])
-        if not case_rows:
-            continue
-        count = len(case_rows)
-        summary[case_name] = {
-            "runs": float(count),
-            "first_token_latency_s": sum(
-                float(row["first_token_latency_s"]) for row in case_rows
-            )
-            / count,
-            "total_response_time_s": sum(
-                float(row["total_response_time_s"]) for row in case_rows
-            )
-            / count,
-            "throughput_tokens_per_second": sum(
-                float(row["throughput_tokens_per_second"] or 0.0)
-                for row in case_rows
-            )
-            / count,
-        }
-    return summary
-
-
-def format_value(value: float | int | str | None) -> str:
-    if value is None:
-        return ""
-    if isinstance(value, float):
-        return f"{value:.3f}"
-    return str(value)
-
-
-def build_table(headers: list[str], rows: list[list[float | int | str | None]]) -> str:
-    widths = [len(header) for header in headers]
-    for row in rows:
-        for index, value in enumerate(row):
-            widths[index] = max(widths[index], len(format_value(value)))
-
-    def render(row: list[float | int | str | None]) -> str:
-        return "| " + " | ".join(
-            format_value(value).ljust(widths[index]) for index, value in enumerate(row)
-        ) + " |"
-
-    separator = "| " + " | ".join("-" * width for width in widths) + " |"
-    return "\n".join([render(headers), separator, *(render(row) for row in rows)])
+    result_path = parse_saved_path(result.stdout)
+    return BenchmarkArtifact(
+        label=label,
+        result_path=result_path,
+        metrics=load_benchmark_metrics(result_path),
+    )
 
 
 def signed_delta(after: float, before: float) -> str:
-    delta = after - before
-    return f"{delta:+.3f}"
+    return f"{after - before:+.2f}"
 
 
 def write_comparison_report(
     *,
     label: str,
+    runtime_meta: RuntimeMeta,
+    metadata: dict[str, Any],
     before_artifact: BenchmarkArtifact,
     after_artifact: BenchmarkArtifact,
-    metadata: dict[str, Any],
     target_primary: Path,
     target_down: Path,
 ) -> Path:
-    before_rows = load_csv_rows(before_artifact.csv_path)
-    after_rows = load_csv_rows(after_artifact.csv_path)
-
-    before_cold = summarize_cold(before_rows)
-    after_cold = summarize_cold(after_rows)
-    before_warm = summarize_warm(before_rows, skip_first_iteration=False)
-    after_warm = summarize_warm(after_rows, skip_first_iteration=False)
-    before_steady = summarize_warm(before_rows, skip_first_iteration=True)
-    after_steady = summarize_warm(after_rows, skip_first_iteration=True)
-
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     generated_at = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     report_path = RESULTS_DIR / f"{generated_at}-{slugify(label)}-comparison.md"
+
+    metric_rows = [
+        (
+            "Output throughput (tok/s)",
+            before_artifact.metrics.get("output_throughput", 0.0),
+            after_artifact.metrics.get("output_throughput", 0.0),
+        ),
+        (
+            "Mean TTFT (ms)",
+            before_artifact.metrics.get("mean_ttft_ms", 0.0),
+            after_artifact.metrics.get("mean_ttft_ms", 0.0),
+        ),
+        (
+            "Mean TPOT (ms)",
+            before_artifact.metrics.get("mean_tpot_ms", 0.0),
+            after_artifact.metrics.get("mean_tpot_ms", 0.0),
+        ),
+        (
+            "Mean E2E latency (ms)",
+            before_artifact.metrics.get("mean_e2e_latency_ms", 0.0),
+            after_artifact.metrics.get("mean_e2e_latency_ms", 0.0),
+        ),
+        (
+            "P99 ITL (ms)",
+            before_artifact.metrics.get("p99_itl_ms", 0.0),
+            after_artifact.metrics.get("p99_itl_ms", 0.0),
+        ),
+    ]
 
     lines = [
         f"# MoE Refresh Comparison: {label}",
         "",
         f"- Generated at: `{generated_at}`",
+        f"- Workload: `{runtime_meta.active_workload}`",
+        f"- Instance: `{runtime_meta.instance_name}`",
         f"- Model: `{metadata['model_id']}`",
         f"- Architecture: `{metadata['architecture']}`",
         f"- TP/EP: `{metadata['tp_size']}` / `{metadata['ep_size']}`",
@@ -576,176 +473,49 @@ def write_comparison_report(
         f"- Triton target dir: `{metadata['version_dir']}`",
         f"- Target primary file: `{target_primary.relative_to(PROJECT_DIR)}`",
         f"- Target down file: `{target_down.relative_to(PROJECT_DIR)}`",
-        f"- Before benchmark: `{before_artifact.csv_path.relative_to(PROJECT_DIR)}`",
-        f"- After benchmark: `{after_artifact.csv_path.relative_to(PROJECT_DIR)}`",
+        f"- Before benchmark: `{before_artifact.result_path.relative_to(PROJECT_DIR)}`",
+        f"- After benchmark: `{after_artifact.result_path.relative_to(PROJECT_DIR)}`",
+        "",
+        "| Metric | Before | After | Delta |",
+        "| --- | --- | --- | --- |",
     ]
 
     selected = metadata.get("selected")
     if selected is not None:
+        lines.insert(
+            11,
+            f"- Source profile: `{selected['device']}` from `triton_{selected['version'].replace('.', '_')}`",
+        )
+
+    for name, before, after in metric_rows:
         lines.append(
-            f"- Source profile: `{selected['device']}` from `triton_{selected['version'].replace('.', '_')}`"
-        )
-        lines.append(f"- Source primary path: `{selected['primary_path']}`")
-        if selected["down_path"]:
-            lines.append(f"- Source down path: `{selected['down_path']}`")
-        else:
-            lines.append("- Source down path: mirrored from source primary")
-
-    if before_cold and after_cold:
-        lines.extend(
-            [
-                "",
-                "## Cold Start",
-                "",
-                build_table(
-                    [
-                        "Metric",
-                        "Before",
-                        "After",
-                        "Delta",
-                    ],
-                    [
-                        [
-                            "Health Ready (s)",
-                            before_cold["container_health_ready_s"],
-                            after_cold["container_health_ready_s"],
-                            signed_delta(
-                                after_cold["container_health_ready_s"],
-                                before_cold["container_health_ready_s"],
-                            ),
-                        ],
-                        [
-                            "Model Ready (s)",
-                            before_cold["model_ready_s"],
-                            after_cold["model_ready_s"],
-                            signed_delta(
-                                after_cold["model_ready_s"],
-                                before_cold["model_ready_s"],
-                            ),
-                        ],
-                        [
-                            "First Success (s)",
-                            before_cold["first_successful_request_s"],
-                            after_cold["first_successful_request_s"],
-                            signed_delta(
-                                after_cold["first_successful_request_s"],
-                                before_cold["first_successful_request_s"],
-                            ),
-                        ],
-                        [
-                            "First Token (s)",
-                            before_cold["first_token_latency_s"],
-                            after_cold["first_token_latency_s"],
-                            signed_delta(
-                                after_cold["first_token_latency_s"],
-                                before_cold["first_token_latency_s"],
-                            ),
-                        ],
-                        [
-                            "Total Time (s)",
-                            before_cold["total_response_time_s"],
-                            after_cold["total_response_time_s"],
-                            signed_delta(
-                                after_cold["total_response_time_s"],
-                                before_cold["total_response_time_s"],
-                            ),
-                        ],
-                        [
-                            "Throughput (tok/s)",
-                            before_cold["throughput_tokens_per_second"],
-                            after_cold["throughput_tokens_per_second"],
-                            signed_delta(
-                                after_cold["throughput_tokens_per_second"],
-                                before_cold["throughput_tokens_per_second"],
-                            ),
-                        ],
-                    ],
-                ),
-            ]
+            f"| {name} | {before:.2f} | {after:.2f} | {signed_delta(after, before)} |"
         )
 
-    def append_warm_section(
-        title: str,
-        before_summary: dict[str, dict[str, float]],
-        after_summary: dict[str, dict[str, float]],
-    ) -> None:
-        if not before_summary or not after_summary:
-            return
-        rows: list[list[float | int | str | None]] = []
-        for case_name in ["short", "medium", "long"]:
-            if case_name not in before_summary or case_name not in after_summary:
-                continue
-            before_case = before_summary[case_name]
-            after_case = after_summary[case_name]
-            rows.append(
-                [
-                    case_name,
-                    int(before_case["runs"]),
-                    before_case["first_token_latency_s"],
-                    after_case["first_token_latency_s"],
-                    signed_delta(
-                        after_case["first_token_latency_s"],
-                        before_case["first_token_latency_s"],
-                    ),
-                    before_case["total_response_time_s"],
-                    after_case["total_response_time_s"],
-                    signed_delta(
-                        after_case["total_response_time_s"],
-                        before_case["total_response_time_s"],
-                    ),
-                    before_case["throughput_tokens_per_second"],
-                    after_case["throughput_tokens_per_second"],
-                    signed_delta(
-                        after_case["throughput_tokens_per_second"],
-                        before_case["throughput_tokens_per_second"],
-                    ),
-                ]
-            )
+    lines.extend(
+        [
+            "",
+            f"- Completed before: `{before_artifact.metrics.get('completed')}`",
+            f"- Completed after: `{after_artifact.metrics.get('completed')}`",
+        ]
+    )
 
-        if not rows:
-            return
-
-        lines.extend(
-            [
-                "",
-                f"## {title}",
-                "",
-                build_table(
-                    [
-                        "Case",
-                        "Runs",
-                        "Before First Token (s)",
-                        "After First Token (s)",
-                        "Delta",
-                        "Before Total (s)",
-                        "After Total (s)",
-                        "Delta",
-                        "Before Throughput",
-                        "After Throughput",
-                        "Delta",
-                    ],
-                    rows,
-                ),
-            ]
-        )
-
-    append_warm_section("Warm Averages", before_warm, after_warm)
-    append_warm_section("Steady-State Warm Averages", before_steady, after_steady)
-
-    report_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+    report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return report_path
 
 
 def write_failure_report(
     *,
     label: str,
-    before_artifact: BenchmarkArtifact,
+    runtime_meta: RuntimeMeta,
     metadata: dict[str, Any],
+    before_artifact: BenchmarkArtifact,
     target_primary: Path,
     target_down: Path,
     error: subprocess.CalledProcessError,
     restore_returncode: int,
 ) -> Path:
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     generated_at = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     report_path = RESULTS_DIR / f"{generated_at}-{slugify(label)}-failure.md"
     selected = metadata.get("selected")
@@ -754,6 +524,8 @@ def write_failure_report(
         f"# MoE Refresh Failure: {label}",
         "",
         f"- Generated at: `{generated_at}`",
+        f"- Workload: `{runtime_meta.active_workload}`",
+        f"- Instance: `{runtime_meta.instance_name}`",
         f"- Model: `{metadata['model_id']}`",
         f"- Architecture: `{metadata['architecture']}`",
         f"- TP/EP: `{metadata['tp_size']}` / `{metadata['ep_size']}`",
@@ -761,7 +533,7 @@ def write_failure_report(
         f"- Triton target dir: `{metadata['version_dir']}`",
         f"- Target primary file: `{target_primary.relative_to(PROJECT_DIR)}`",
         f"- Target down file: `{target_down.relative_to(PROJECT_DIR)}`",
-        f"- Baseline benchmark: `{before_artifact.csv_path.relative_to(PROJECT_DIR)}`",
+        f"- Baseline benchmark: `{before_artifact.result_path.relative_to(PROJECT_DIR)}`",
         f"- Restore command exit code: `{restore_returncode}`",
     ]
     if selected is not None:
@@ -862,24 +634,18 @@ def refresh_targets(
         print(result.stderr, end="", file=sys.stderr)
 
 
-def ensure_positive_warm_runs(value: int) -> None:
-    if value < 1:
-        raise SystemExit("Error: --warm-runs must be at least 1.")
-
-
 def main(argv: list[str]) -> int:
     args = parse_args(argv)
-    ensure_positive_warm_runs(args.warm_runs)
 
-    compose_meta = resolve_compose_meta()
+    runtime_meta = resolve_runtime_meta()
     host_device_name = get_host_device_name()
     metadata = fetch_moe_metadata(
-        compose_meta,
+        runtime_meta,
         host_device_name=host_device_name,
         requested_source_device=args.source_device,
     )
 
-    target_dir = compose_meta.moe_config_source / "configs" / metadata["version_dir"]
+    target_dir = runtime_meta.moe_config_source / "configs" / metadata["version_dir"]
     target_primary = target_dir / metadata["target_primary_name"]
     target_down = target_dir / metadata["target_down_name"]
 
@@ -894,6 +660,8 @@ def main(argv: list[str]) -> int:
             "Error: refresh aborted because no upstream source profile matched the configured model."
         )
 
+    print(f"Configured workload: {runtime_meta.active_workload}")
+    print(f"Configured instance: {runtime_meta.instance_name}")
     print(f"Configured model: {metadata['model_id']}")
     print(f"Exact shape: {metadata['shape_prefix']}")
     print(f"Target primary file: {target_primary.relative_to(PROJECT_DIR)}")
@@ -905,16 +673,15 @@ def main(argv: list[str]) -> int:
     print("")
     print("Running baseline benchmark before refresh...")
     before_artifact = run_benchmark(
+        instance_name=runtime_meta.instance_name,
         label=f"{args.label}-before",
-        warm_runs=args.warm_runs,
-        cold_case=args.cold_case,
     )
 
     with tempfile.TemporaryDirectory(prefix="refresh-moe-configs-") as backup_root:
         backup_dir = Path(backup_root)
         existence = backup_targets(target_primary, target_down, backup_dir)
         refresh_targets(
-            image=compose_meta.image,
+            image=runtime_meta.image,
             metadata=metadata,
             target_primary=target_primary,
             target_down=target_down,
@@ -924,9 +691,8 @@ def main(argv: list[str]) -> int:
             print("")
             print("Running post-refresh benchmark...")
             after_artifact = run_benchmark(
+                instance_name=runtime_meta.instance_name,
                 label=f"{args.label}-after",
-                warm_runs=args.warm_runs,
-                cold_case=args.cold_case,
             )
         except subprocess.CalledProcessError as error:
             print("")
@@ -944,6 +710,7 @@ def main(argv: list[str]) -> int:
                 print(start_result.stderr, end="", file=sys.stderr)
             failure_report = write_failure_report(
                 label=args.label,
+                runtime_meta=runtime_meta,
                 before_artifact=before_artifact,
                 metadata=metadata,
                 target_primary=target_primary,
@@ -951,13 +718,12 @@ def main(argv: list[str]) -> int:
                 error=error,
                 restore_returncode=start_result.returncode,
             )
-            print(
-                f"Failure report: {failure_report.relative_to(PROJECT_DIR)}"
-            )
+            print(f"Failure report: {failure_report.relative_to(PROJECT_DIR)}")
             raise SystemExit(error.returncode) from error
 
     comparison_path = write_comparison_report(
         label=args.label,
+        runtime_meta=runtime_meta,
         before_artifact=before_artifact,
         after_artifact=after_artifact,
         metadata=metadata,
@@ -967,8 +733,8 @@ def main(argv: list[str]) -> int:
 
     print("")
     print("Refresh complete.")
-    print(f"Before benchmark: {before_artifact.csv_path.relative_to(PROJECT_DIR)}")
-    print(f"After benchmark: {after_artifact.csv_path.relative_to(PROJECT_DIR)}")
+    print(f"Before benchmark: {before_artifact.result_path.relative_to(PROJECT_DIR)}")
+    print(f"After benchmark: {after_artifact.result_path.relative_to(PROJECT_DIR)}")
     print(f"Comparison report: {comparison_path.relative_to(PROJECT_DIR)}")
     return 0
 

@@ -8,6 +8,6 @@ cd "$PROJECT_DIR"
 
 source "$SCRIPT_DIR/load-config.sh"
 
-echo "==> Stopping inference service..."
-docker compose down
-echo "==> Service stopped."
+echo "==> Stopping workload: $ACTIVE_WORKLOAD"
+docker compose -f "$COMPOSE_FILE" down
+echo "==> Workload stopped."

@@ -6,6 +6,17 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
 source "$SCRIPT_DIR/load-config.sh"
 
+if [[ -z "${INSTANCE:-}" ]]; then
+  INSTANCE_COUNT=$(echo "$ACTIVE_INSTANCES" | wc -w)
+  if [[ "$INSTANCE_COUNT" == "1" ]]; then
+    export INSTANCE="$ACTIVE_INSTANCES"
+    source "$SCRIPT_DIR/load-config.sh"
+  else
+    echo "Error: active workload has $INSTANCE_COUNT instances ($ACTIVE_INSTANCES). Pass INSTANCE=<name>." >&2
+    exit 1
+  fi
+fi
+
 MODEL="$MODEL_ID"
 BASE="http://localhost:$PORT"
 
@@ -36,7 +47,8 @@ printf "\r\033[K"
 
 # Header
 echo ""
-printf "${BOLD}${CYAN}  Nemotron Chat${RESET}\n"
+printf "${BOLD}${CYAN}  Smelter Chat${RESET}\n"
+printf "${DIM}  Instance: ${INSTANCE_NAME}${RESET}\n"
 printf "${DIM}  Model: ${MODEL}${RESET}\n"
 printf "${DIM}  Type /clear to reset, /info for stats, exit to quit${RESET}\n"
 echo ""

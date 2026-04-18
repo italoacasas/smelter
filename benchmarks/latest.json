@@ -1,38 +1,14 @@
 {
-  "nemotron-cascade-2/rtx-pro-6000": {
-    "model_id": "nvidia/Nemotron-Cascade-2-30B-A3B",
-    "timestamp": "20260321T165301Z",
-    "label": "gpu-clocks-locked",
-    "result_file": "benchmarks/results/20260321T165301Z-gpu-clocks-locked.jsonl",
-    "completed": 100,
-    "output_tok_per_s": 155.03,
-    "mean_ttft_ms": 93.51,
-    "mean_tpot_ms": 6.29,
-    "mean_e2e_latency_ms": 3382.49,
-    "p99_itl_ms": 6.51
-  },
-  "qwen3-coder-next/rtx-pro-6000": {
-    "model_id": "Qwen/Qwen3-Coder-Next-FP8",
-    "timestamp": "20260321T202014Z",
-    "label": "bf16-kv-cutlass-triton-moe",
-    "result_file": "benchmarks/results/20260321T202014Z-bf16-kv-cutlass-triton-moe.jsonl",
-    "completed": 100,
-    "output_tok_per_s": 122.38,
-    "mean_ttft_ms": 109.27,
-    "mean_tpot_ms": 7.96,
-    "mean_e2e_latency_ms": 4284.78,
-    "p99_itl_ms": 8.26
-  },
-  "nemotron-3-super/rtx-pro-6000-x2": {
-    "model_id": "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-FP8",
-    "timestamp": "20260328T222528Z",
-    "label": "baseline-20p",
-    "result_file": "benchmarks/results/20260328T222528Z-baseline-20p.jsonl",
-    "completed": 20,
-    "output_tok_per_s": 77.4,
-    "mean_ttft_ms": 163.31,
-    "mean_tpot_ms": 12.66,
-    "mean_e2e_latency_ms": 7543.31,
-    "p99_itl_ms": 13.19
+  "qwen36": {
+    "model_id": "Qwen/Qwen3.6-35B-A3B-FP8",
+    "timestamp": "20260418T140032Z",
+    "label": "manual",
+    "result_file": "benchmarks/results/20260418T140032Z-manual.jsonl",
+    "completed": 8,
+    "output_tok_per_s": 218.02,
+    "mean_ttft_ms": 136.52,
+    "mean_tpot_ms": 4.13,
+    "mean_e2e_latency_ms": 2808.43,
+    "p99_itl_ms": 12.3
   }
 }

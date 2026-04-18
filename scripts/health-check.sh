@@ -6,8 +6,6 @@ PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
 source "$SCRIPT_DIR/load-config.sh"
 
-BASE="http://localhost:$PORT"
-MODEL="$MODEL_ID"
 PASS=0
 FAIL=0
 
@@ -32,21 +30,33 @@ check() {
   fi
 }
 
-echo "==> Health check: $BASE"
-echo ""
+TARGET_INSTANCES="${INSTANCE:-$ACTIVE_INSTANCES}"
 
-echo "Container / transport"
-check "/health"       GET  "$BASE/health"
-check "/v1/models"    GET  "$BASE/v1/models"
+for instance in $TARGET_INSTANCES; do
+  export INSTANCE="$instance"
+  source "$SCRIPT_DIR/load-config.sh"
+  BASE="http://localhost:$PORT"
+  MODEL="$MODEL_ID"
 
-echo ""
-echo "Model readiness"
-check "/api/tags"     GET  "$BASE/api/tags"
-check "/api/show"     POST "$BASE/api/show"      "{\"model\":\"$MODEL\"}"
-check "/api/generate" POST "$BASE/api/generate"  "{\"model\":\"$MODEL\",\"prompt\":\"ping\",\"stream\":false}"
-check "/api/chat"     POST "$BASE/api/chat"      "{\"model\":\"$MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}],\"stream\":false}"
+  echo "==> Health check [$INSTANCE_NAME]: $BASE"
+  echo ""
 
-echo ""
+  echo "Container / transport"
+  check "/health"       GET  "$BASE/health"
+  check "/v1/models"    GET  "$BASE/v1/models"
+
+  echo ""
+  echo "Model readiness"
+  check "/api/tags"     GET  "$BASE/api/tags"
+  check "/api/show"     POST "$BASE/api/show"      "{\"model\":\"$MODEL\"}"
+  check "/api/generate" POST "$BASE/api/generate"  "{\"model\":\"$MODEL\",\"prompt\":\"ping\",\"stream\":false}"
+  check "/v1/chat/completions" POST "$BASE/v1/chat/completions" "{\"model\":\"$MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}],\"stream\":false}"
+
+  echo ""
+done
+
+unset INSTANCE
+
 echo "Results: $PASS passed, $FAIL failed"
 
 if [[ "$FAIL" -gt 0 ]]; then

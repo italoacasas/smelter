@@ -8,4 +8,5 @@ cd "$PROJECT_DIR"
 
 source "$SCRIPT_DIR/load-config.sh"
 
-docker compose logs -f
+TARGETS="${INSTANCE:-$ACTIVE_INSTANCES}"
+docker compose -f "$COMPOSE_FILE" logs -f $TARGETS

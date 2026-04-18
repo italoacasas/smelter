@@ -1,5 +1,6 @@
 .env
 .active
+.smelter/
 *.log
 *.pid
 models/
